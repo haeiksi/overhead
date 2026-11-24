@@ -89,7 +89,7 @@ main { position: relative; min-height: 0; }
 }
 .hero-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; }
 .tag { font-size: 1.8vmin; color: var(--grey-text); letter-spacing: .4vmin; }
-#callsign { font-family: var(--font-big); font-size: 17vmin; line-height: .85; white-space: nowrap; }
+#callsign { font-family: var(--font-big); font-size: 13vmin; line-height: .85; white-space: nowrap; }
 #airline  { font-size: 3.4vmin; color: var(--white); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #actype   { font-size: 3vmin; color: var(--amber); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cells { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.4vmin; }
@@ -98,6 +98,13 @@ main { position: relative; min-height: 0; }
 .cell .val { font-family: var(--font-big); font-size: 6.2vmin; line-height: 1; color: var(--white); white-space: nowrap; }
 .cell .sub { font-size: 2vmin; color: var(--amber); white-space: nowrap; }
 .arrow { display: inline-block; width: 4.2vmin; height: 4.2vmin; vertical-align: middle; margin-right: .8vmin; transition: transform 1s; }
+
+/* Route: Abflug-/Zielflughafen */
+.route { margin-top: 1vmin; }
+.rt { display: flex; align-items: baseline; gap: 1.4vmin; font-size: 2.8vmin; line-height: 1.3; white-space: nowrap; overflow: hidden; }
+.rl { width: 7vmin; flex: none; font-size: 1.7vmin; color: var(--grey-text); letter-spacing: .3vmin; }
+.ri { width: 8.5vmin; flex: none; font-family: var(--font-big); font-size: 4.4vmin; color: var(--amber); text-shadow: 0 0 1vmin rgba(255,176,0,.5); }
+.rn { min-width: 0; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; color: var(--white); }
 
 /* Foto-Rahmen (Scanlines + Retro-Filter) */
 #photoBox {
@@ -161,7 +168,7 @@ body.ui-hidden .ctrl { opacity: .15; } /* bleibt schwach sichtbar und klickbar *
   background: rgba(0,0,0,.88);
 }
 #settings.open { display: flex; }
-.panel { width: min(92vw, 640px); max-height: 94vh; overflow: auto; border: 0.3vmin solid var(--amber); background: #0a0a0a; padding: 2.4vmin; }
+.panel { width: min(94vw, 1280px); max-height: 94vh; overflow: auto; border: 0.3vmin solid var(--amber); background: #0a0a0a; padding: 2.4vmin; }
 .panel h3 { font-weight: normal; color: var(--amber); letter-spacing: .5vmin; margin-bottom: 1.6vmin; font-size: 3vmin; }
 .panel label { display: block; font-size: 2vmin; color: var(--grey-text); margin-top: 1.2vmin; }
 .panel input[type=text], .panel input[type=number], .panel input[type=time] {
@@ -172,7 +179,7 @@ body.ui-hidden .ctrl { opacity: .15; } /* bleibt schwach sichtbar und klickbar *
 .panel .chk { display: flex; align-items: center; gap: 1vmin; color: var(--white); }
 .panel .chk input { width: 3vmin; height: 3vmin; }
 .btns { display: flex; gap: 1.4vmin; margin-top: 2.2vmin; }
-.btns button { flex: 1; padding: 1.4vmin; font-family: var(--font); font-size: 2.6vmin; background: var(--grey); color: var(--white); border: 0.2vmin solid #444; border-radius: .6vmin; cursor: pointer; }
+.btns button { flex: 1; white-space: nowrap; padding: 1.2vmin; font-family: var(--font); font-size: 2.6vmin; background: var(--grey); color: var(--white); border: 0.2vmin solid #444; border-radius: .6vmin; cursor: pointer; }
 .btns button.primary { background: var(--amber); color: #000; border-color: var(--amber); }
 </style>
 </head>
@@ -197,6 +204,10 @@ body.ui-hidden .ctrl { opacity: .15; } /* bleibt schwach sichtbar und klickbar *
             <div id="callsign" class="amber">------</div>
             <div id="airline">---</div>
             <div id="actype">---</div>
+            <div class="route">
+              <div class="rt"><span class="rl">VON</span><span class="ri" id="oIata">---</span><span class="rn" id="oName">---</span></div>
+              <div class="rt"><span class="rl">NACH</span><span class="ri" id="dIata">---</span><span class="rn" id="dName">---</span></div>
+            </div>
           </div>
           <div class="cells">
             <div class="cell"><div class="lbl">HÖHE</div><div class="val" id="vAlt">---</div><div class="sub" id="sAlt">---</div></div>
@@ -237,7 +248,10 @@ body.ui-hidden .ctrl { opacity: .15; } /* bleibt schwach sichtbar und klickbar *
 <div id="settings">
   <div class="panel">
     <h3>EINSTELLUNGEN</h3>
-    <label>Ortsname<input type="text" id="sName"></label>
+    <div class="two">
+      <label>Ortsname<input type="text" id="sName"></label>
+      <label>CORS-Proxy (optional, leer = direkt)<input type="text" id="sProxy" placeholder="https://overhead.name.workers.dev/"></label>
+    </div>
     <div class="two">
       <label>Breitengrad (LAT)<input type="text" inputmode="decimal" id="sLat"></label>
       <label>Längengrad (LON)<input type="text" inputmode="decimal" id="sLon"></label>
@@ -246,7 +260,6 @@ body.ui-hidden .ctrl { opacity: .15; } /* bleibt schwach sichtbar und klickbar *
       <label>Radius (km)<input type="number" id="sRadius" min="1" max="400" step="1"></label>
       <label>Abfrage-Intervall (Sek., min. 10)<input type="number" id="sPoll" min="10" max="300" step="1"></label>
     </div>
-    <label>CORS-Proxy (optional, leer = direkt)<input type="text" id="sProxy" placeholder="https://overhead.name.workers.dev/"></label>
     <label class="chk" style="margin-top:1.6vmin"><input type="checkbox" id="sNight"> Nachtmodus aktiv (keine Abfragen, gedimmt)</label>
     <div class="two">
       <label>Nacht von<input type="time" id="sNStart"></label>
@@ -290,6 +303,7 @@ var API_SOURCES = [
   { name: 'adsb.one',       url: 'https://api.adsb.one/v2/point/{lat}/{lon}/{nm}' }
 ];
 var PHOTO_API = 'https://api.planespotters.net/pub/photos/hex/';
+var ROUTE_API = 'https://api.adsbdb.com/v0/callsign/';   // Abflug-/Zielflughafen per Rufzeichen
 var KM_PER_NM = 1.852;
 var FT_PER_M = 3.28084;
 
@@ -333,6 +347,20 @@ function fetchJson(url, ms) {
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (j) { if (!done) { done = true; clearTimeout(t); resolve(j); } })
       .catch(function (e) { if (!done) { done = true; clearTimeout(t); reject(e); } });
+  });
+}
+
+/* Adresse über den eigenen Proxy leiten (falls in den Einstellungen eingetragen) */
+function viaProxy(url) {
+  if (!CONFIG.PROXY_URL) return url;
+  return CONFIG.PROXY_URL + (CONFIG.PROXY_URL.indexOf('?') >= 0 ? '&' : '?') + 'url=' + encodeURIComponent(url);
+}
+/* Mit Proxy zuerst über den Proxy, bei Fehler direkt; ohne Proxy direkt */
+function fetchSmart(url, ms) {
+  if (!CONFIG.PROXY_URL) return fetchJson(url, ms);
+  return fetchJson(viaProxy(url), ms).catch(function (err) {
+    if (/404/.test(err && err.message)) throw err;      // "unbekannt" ist eine gültige Antwort
+    return fetchJson(url, ms);
   });
 }
 
@@ -398,9 +426,7 @@ function fetchAircraft() {
     var src = API_SOURCES[idx];
     var url = src.url.replace('{lat}', CONFIG.LAT).replace('{lon}', CONFIG.LON).replace('{nm}', radiusNm());
     // Mit Proxy: Anfrage läuft über den eigenen Worker, der die CORS-Header ergänzt
-    if (CONFIG.PROXY_URL) {
-      url = CONFIG.PROXY_URL + (CONFIG.PROXY_URL.indexOf('?') >= 0 ? '&' : '?') + 'url=' + encodeURIComponent(url);
-    }
+    url = viaProxy(url);
     return fetchJson(url, 8000).then(function (data) {
       var ac = data && (data.ac || data.aircraft);
       if (!ac) throw new Error('Ungültige Antwort');
@@ -488,6 +514,7 @@ function renderFlights(list) {
 
   /* Foto nur laden, wenn sich das nächste Flugzeug ändert */
   if (main.hex !== currentHex) { currentHex = main.hex; loadPhoto(main.hex); }
+  if (main.callsign !== currentRouteCs) { currentRouteCs = main.callsign; showRoute(main.callsign); }
 }
 function pad3(n) { return (n < 10 ? '00' : n < 100 ? '0' : '') + n; }
 function shortType(p) { return (p.type || '---').replace(/^(AIRBUS|BOEING)\s+/, function (m) { return m.charAt(0); }).substring(0, 12); }
@@ -504,6 +531,42 @@ function showIdle(msg) {
 }
 
 /* ---------------------------------------------------------
+   Route (Abflug-/Zielflughafen) – Quelle: adsbdb.com, per Rufzeichen.
+   Nur Linienflug-Rufzeichen (z. B. DLH123) haben Routendaten; die Daten
+   sind community-gepflegt und können veraltet oder falsch sein.
+   --------------------------------------------------------- */
+var routeCache = {}, currentRouteCs = null;
+
+function airportLabel(a) {
+  var name = a.name || '', city = a.municipality || '';
+  if (city && name.toLowerCase().indexOf(city.toLowerCase()) < 0) name += ' (' + city + ')';
+  return name || '---';
+}
+function applyRoute(r, fallbackText) {
+  if (r && r.o && r.d) {
+    setText($('oIata'), r.o.iata_code || r.o.icao_code || '---'); setText($('oName'), airportLabel(r.o));
+    setText($('dIata'), r.d.iata_code || r.d.icao_code || '---'); setText($('dName'), airportLabel(r.d));
+  } else {
+    setText($('oIata'), '---'); setText($('oName'), fallbackText || 'ROUTE UNBEKANNT');
+    setText($('dIata'), '---'); setText($('dName'), '---');
+  }
+}
+function showRoute(cs) {
+  if (!/^[A-Z]{3}\d/.test(cs)) { applyRoute(null, 'KEINE ROUTENDATEN'); return; }   // z. B. nur Kennzeichen
+  if (routeCache[cs] !== undefined) { applyRoute(routeCache[cs]); return; }
+  applyRoute(null, 'LADE ROUTE...');
+  fetchSmart(ROUTE_API + encodeURIComponent(cs), 6000).then(function (d) {
+    var fr = d && d.response && d.response.flightroute;
+    var r = fr && fr.origin && fr.destination ? { o: fr.origin, d: fr.destination } : null;
+    routeCache[cs] = r;
+    if (cs === currentRouteCs) applyRoute(r);
+  }).catch(function (err) {
+    if (/404/.test(err && err.message)) routeCache[cs] = null;      // Rufzeichen nicht in der Datenbank
+    if (cs === currentRouteCs) applyRoute(null);
+  });
+}
+
+/* ---------------------------------------------------------
    Optional: Flugzeug-Foto (Planespotters) – bei Fehler ausblenden
    --------------------------------------------------------- */
 function hidePhoto() { $('photoBox').className = ''; }
@@ -512,7 +575,7 @@ function loadPhoto(hex) {
   if (!hex) return;
   var cached = photoCache[hex];
   if (cached !== undefined) { applyPhoto(hex, cached); return; }
-  fetchJson(PHOTO_API + encodeURIComponent(hex), 6000).then(function (d) {
+  fetchSmart(PHOTO_API + encodeURIComponent(hex), 6000).then(function (d) {
     var ph = d && d.photos && d.photos[0];
     var res = ph ? { src: (ph.thumbnail_large || ph.thumbnail || {}).src, by: ph.photographer || '' } : null;
     if (res && !res.src) res = null;
