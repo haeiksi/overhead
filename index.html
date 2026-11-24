@@ -250,7 +250,7 @@ body.ui-hidden .ctrl { opacity: .15; } /* bleibt schwach sichtbar und klickbar *
     <h3>EINSTELLUNGEN</h3>
     <div class="two">
       <label>Ortsname<input type="text" id="sName"></label>
-      <label>CORS-Proxy (optional, leer = direkt)<input type="text" id="sProxy" placeholder="https://overhead.name.workers.dev/"></label>
+      <label>CORS-Proxy (optional, leer = direkt)<input type="text" id="sProxy" placeholder="leer = direkte Abfrage"></label>
     </div>
     <div class="two">
       <label>Breitengrad (LAT)<input type="text" inputmode="decimal" id="sLat"></label>
@@ -292,7 +292,7 @@ var DEFAULTS = {
   NIGHT_START: '23:30',  // Beginn Ruhezeit (HH:MM)
   NIGHT_END: '06:00',    // Ende Ruhezeit (HH:MM)
   MAX_OTHERS: 3,         // Anzahl weiterer Flüge in der Tabelle
-  PROXY_URL: ''          // Optional: eigener CORS-Proxy (siehe worker.js), z. B. 'https://overhead.DEIN-NAME.workers.dev/'
+  PROXY_URL: 'https://overhead.haeiks.workers.dev/'   // CORS-Proxy (Cloudflare Worker, siehe worker.js); leer = direkte Abfrage
 };
 
 /* API-Endpunkte (Reihenfolge = Priorität, der zweite ist der Fallback) */
