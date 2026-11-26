@@ -295,12 +295,17 @@ var DEFAULTS = {
   PROXY_URL: 'https://overhead.haeiks.workers.dev/'   // CORS-Proxy (Cloudflare Worker, siehe worker.js); leer = direkte Abfrage
 };
 
-/* API-Endpunkte (Reihenfolge = Priorität, der zweite ist der Fallback) */
+/* API-Endpunkte in Prioritätsreihenfolge. Stand Nov. 2026 laut Berichten:
+   - adsb.fi:        1 Anfrage/s, kein Tageslimit genannt, blockiert aber Cloudflare-Worker (403) -> direkt abfragen
+   - adsb.lol:       ca. 500 Anfragen/Tag pro IP (HTTP 429 bei Überschreitung)
+   - adsb.one:       Status unklar
+   - airplanes.live: öffentliche API für Nicht-Feeder gesperrt (403)
+   Jede Quelle wird zuerst direkt (Browser) und dann über den Proxy versucht. */
 var API_SOURCES = [
-  { name: 'airplanes.live', url: 'https://api.airplanes.live/v2/point/{lat}/{lon}/{nm}' },
-  { name: 'adsb.lol',       url: 'https://api.adsb.lol/v2/point/{lat}/{lon}/{nm}' },
   { name: 'adsb.fi',        url: 'https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lon}/dist/{nm}' },
-  { name: 'adsb.one',       url: 'https://api.adsb.one/v2/point/{lat}/{lon}/{nm}' }
+  { name: 'adsb.lol',       url: 'https://api.adsb.lol/v2/point/{lat}/{lon}/{nm}' },
+  { name: 'adsb.one',       url: 'https://api.adsb.one/v2/point/{lat}/{lon}/{nm}' },
+  { name: 'airplanes.live', url: 'https://api.airplanes.live/v2/point/{lat}/{lon}/{nm}' }
 ];
 var PHOTO_API = 'https://api.planespotters.net/pub/photos/hex/';
 var ROUTE_API = 'https://api.adsbdb.com/v0/callsign/';   // Abflug-/Zielflughafen per Rufzeichen
@@ -419,24 +424,50 @@ var lastSource = '-', lastUpdate = null, lastError = '';
 
 function radiusNm() { return Math.max(1, Math.min(250, Math.ceil(CONFIG.RADIUS_KM / KM_PER_NM))); }
 
-/* Versucht Quelle 1, bei Fehler/Rate-Limit automatisch Quelle 2 */
+/* ---- Schonung der Quellen: fehlgeschlagene Quelle+Zugriffsart pausieren ----
+   403 = 30 Min, 429 = 10 Min, CORS/Netzfehler direkt = 60 Min (proxy = 5 Min), sonst 1 Min.
+   Gespeichert in localStorage, damit ein Neuladen die Pause nicht aufhebt. */
+var COOL_KEY = 'overhead.cool';
+var cool = loadCool();
+function loadCool() { try { return JSON.parse(localStorage.getItem(COOL_KEY) || '{}') || {}; } catch (e) { return {}; } }
+function saveCool() { try { localStorage.setItem(COOL_KEY, JSON.stringify(cool)); } catch (e) {} }
+function coolMs(err, mode) {
+  var m = (err && err.message) || '';
+  if (/403/.test(m)) return 30 * 60000;
+  if (/429/.test(m)) return 10 * 60000;
+  if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return (mode === 'direct' ? 60 : 5) * 60000;
+  if (/Ungültige/.test(m)) return 5 * 60000;
+  return 60000;
+}
+function hhmm(t) { var d = new Date(t); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+
+/* Reihenfolge: je Quelle erst direkt, dann über den Proxy (falls eingetragen). Pausierte werden übersprungen. */
 function fetchAircraft() {
+  var cands = [], now = Date.now(), i, m, modes = CONFIG.PROXY_URL ? ['direct', 'proxy'] : ['direct'], until = 0;
+  for (i = 0; i < API_SOURCES.length; i++) {
+    for (m = 0; m < modes.length; m++) {
+      var k = API_SOURCES[i].name + '|' + modes[m];
+      if (cool[k] && cool[k] > now) { if (!until || cool[k] < until) until = cool[k]; continue; }
+      cands.push({ src: API_SOURCES[i], mode: modes[m], key: k });
+    }
+  }
+  if (!cands.length) return Promise.reject(new Error('ALLE QUELLEN PAUSIERT BIS ' + hhmm(until)));
+
   var idx = 0, errors = [];
   function attempt() {
-    var src = API_SOURCES[idx];
-    var url = src.url.replace('{lat}', CONFIG.LAT).replace('{lon}', CONFIG.LON).replace('{nm}', radiusNm());
-    // Mit Proxy: Anfrage läuft über den eigenen Worker, der die CORS-Header ergänzt
-    url = viaProxy(url);
+    var c = cands[idx];
+    var url = c.src.url.replace('{lat}', CONFIG.LAT).replace('{lon}', CONFIG.LON).replace('{nm}', radiusNm());
+    if (c.mode === 'proxy') url = viaProxy(url);
     return fetchJson(url, 8000).then(function (data) {
       var ac = data && (data.ac || data.aircraft);
       if (!ac) throw new Error('Ungültige Antwort');
-      lastSource = src.name;
+      lastSource = c.src.name + (c.mode === 'proxy' ? ' (PROXY)' : '');
       return ac;
     }).catch(function (err) {
-      // "Failed to fetch" bedeutet meist: CORS blockiert oder Server nicht erreichbar
-      errors.push(src.name + ': ' + (err && err.message ? err.message : 'Fehler'));
+      cool[c.key] = Date.now() + coolMs(err, c.mode); saveCool();
+      errors.push(c.src.name + (c.mode === 'proxy' ? '/proxy' : '') + ': ' + (err && err.message ? err.message : 'Fehler'));
       idx++;
-      if (idx < API_SOURCES.length) return attempt();
+      if (idx < cands.length) return attempt();
       throw new Error(errors.join(' | '));
     });
   }
@@ -460,6 +491,7 @@ function normalize(list) {
       altFt: alt,
       gsKt: typeof a.gs === 'number' ? a.gs : null,
       track: typeof a.track === 'number' ? a.track : null,
+      lat: lat, lon: lon,
       distKm: haversineKm(CONFIG.LAT, CONFIG.LON, lat, lon)
     });
   }
@@ -514,7 +546,7 @@ function renderFlights(list) {
 
   /* Foto nur laden, wenn sich das nächste Flugzeug ändert */
   if (main.hex !== currentHex) { currentHex = main.hex; loadPhoto(main.hex); }
-  if (main.callsign !== currentRouteCs) { currentRouteCs = main.callsign; showRoute(main.callsign); }
+  currentMain = main; updateRoute(main);
 }
 function pad3(n) { return (n < 10 ? '00' : n < 100 ? '0' : '') + n; }
 function shortType(p) { return (p.type || '---').replace(/^(AIRBUS|BOEING)\s+/, function (m) { return m.charAt(0); }).substring(0, 12); }
@@ -535,7 +567,7 @@ function showIdle(msg) {
    Nur Linienflug-Rufzeichen (z. B. DLH123) haben Routendaten; die Daten
    sind community-gepflegt und können veraltet oder falsch sein.
    --------------------------------------------------------- */
-var routeCache = {}, currentRouteCs = null;
+var routeCache = {}, routeTried = {}, currentMain = null;
 
 function airportLabel(a) {
   var name = a.name || '', city = a.municipality || '';
@@ -551,19 +583,41 @@ function applyRoute(r, fallbackText) {
     setText($('dIata'), '---'); setText($('dName'), '---');
   }
 }
-function showRoute(cs) {
+
+/* Plausibilitätsprüfung: adsbdb speichert pro Rufzeichen nur EINE Route, aber Rufzeichen
+   werden an verschiedenen Tagen für verschiedene Flüge benutzt. Ein Flug von A nach B muss
+   ungefähr auf der Strecke A-B liegen: der Umweg (A -> Flugzeug -> B minus A -> B) bleibt klein.
+   Beispiel: Flugzeug über München, Route BER-SZF => Umweg ~460 km => unplausibel. */
+function routePlausible(r, p) {
+  var o = r.o, d = r.d;
+  if (typeof o.latitude !== 'number' || typeof o.longitude !== 'number' ||
+      typeof d.latitude !== 'number' || typeof d.longitude !== 'number' ||
+      typeof p.lat !== 'number' || typeof p.lon !== 'number') return true;   // ohne Koordinaten nicht prüfbar
+  var od = haversineKm(o.latitude, o.longitude, d.latitude, d.longitude);
+  var detour = haversineKm(o.latitude, o.longitude, p.lat, p.lon) +
+               haversineKm(p.lat, p.lon, d.latitude, d.longitude) - od;
+  return detour <= 60 + 0.03 * od;
+}
+
+/* Wird bei jeder Aktualisierung aufgerufen: Netz nur beim ersten Mal, danach Cache + neue Prüfung */
+function updateRoute(p) {
+  var cs = p.callsign, c = routeCache[cs];
   if (!/^[A-Z]{3}\d/.test(cs)) { applyRoute(null, 'KEINE ROUTENDATEN'); return; }   // z. B. nur Kennzeichen
-  if (routeCache[cs] !== undefined) { applyRoute(routeCache[cs]); return; }
-  applyRoute(null, 'LADE ROUTE...');
-  fetchSmart(ROUTE_API + encodeURIComponent(cs), 6000).then(function (d) {
-    var fr = d && d.response && d.response.flightroute;
-    var r = fr && fr.origin && fr.destination ? { o: fr.origin, d: fr.destination } : null;
-    routeCache[cs] = r;
-    if (cs === currentRouteCs) applyRoute(r);
-  }).catch(function (err) {
-    if (/404/.test(err && err.message)) routeCache[cs] = null;      // Rufzeichen nicht in der Datenbank
-    if (cs === currentRouteCs) applyRoute(null);
-  });
+  if (c === undefined) {
+    applyRoute(null, 'LADE ROUTE...');
+    if (!routeTried[cs] || Date.now() - routeTried[cs] > 60000) {
+      routeTried[cs] = Date.now();
+      fetchSmart(ROUTE_API + encodeURIComponent(cs), 6000).then(function (d) {
+        var fr = d && d.response && d.response.flightroute;
+        routeCache[cs] = fr && fr.origin && fr.destination ? { o: fr.origin, d: fr.destination } : null;
+      }).catch(function (err) {
+        if (/404/.test(err && err.message)) routeCache[cs] = null;    // Rufzeichen nicht in der Datenbank
+      }).then(function () { if (currentMain && currentMain.callsign === cs) updateRoute(currentMain); });
+    }
+    return;
+  }
+  if (c === null) { applyRoute(null); return; }
+  if (routePlausible(c, p)) applyRoute(c); else applyRoute(null, 'ROUTE UNSICHER');
 }
 
 /* ---------------------------------------------------------
@@ -625,7 +679,7 @@ function poll() {
   }).catch(function (err) {
     lastError = err && err.message ? err.message : 'Fehler';
     $('statusDot').className = 'dot err';
-    if (!lastUpdate) showIdle('KEINE VERBINDUNG - NEUER VERSUCH...');
+    if (!lastUpdate || Date.now() - lastUpdate.getTime() > 120000) showIdle('KEINE VERBINDUNG - NEUER VERSUCH...');
     if (window.console) console.log('Overhead API-Fehler:', lastError);
     updateFooter();
   }).then(function () {
@@ -741,6 +795,7 @@ $('bSave').addEventListener('click', function () {
   CONFIG.NIGHT_START = $('sNStart').value || DEFAULTS.NIGHT_START;
   CONFIG.NIGHT_END = $('sNEnd').value || DEFAULTS.NIGHT_END;
   saveConfig();
+  cool = {}; saveCool();      // geänderte Einstellungen: Pausen aufheben
   applyConfig();
   closeSettings();
 });
@@ -789,7 +844,7 @@ function applyUrlParams() {
     kv = parts[i].split('=');
     key = kv[0].toLowerCase();
     try { val = decodeURIComponent((kv.slice(1).join('=') || '').replace(/\+/g, ' ')); } catch (e) { continue; }
-    if (key === 'reset') { try { localStorage.removeItem('overhead.config'); } catch (e2) {} CONFIG = loadConfig(); changed = true; }
+    if (key === 'reset') { try { localStorage.removeItem('overhead.config'); localStorage.removeItem(COOL_KEY); } catch (e2) {} cool = {}; CONFIG = loadConfig(); changed = true; }
     else if (key === 'lat')    { CONFIG.LAT = num(val, CONFIG.LAT); changed = true; needSave = true; }
     else if (key === 'lon')    { CONFIG.LON = num(val, CONFIG.LON); changed = true; needSave = true; }
     else if (key === 'name')   { CONFIG.NAME = val || CONFIG.NAME; changed = true; needSave = true; }
