@@ -178,6 +178,10 @@ body.ui-hidden .ctrl { opacity: .15; } /* bleibt schwach sichtbar und klickbar *
 .panel .two { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4vmin; }
 .panel .chk { display: flex; align-items: center; gap: 1vmin; color: var(--white); }
 .panel .chk input { width: 3vmin; height: 3vmin; }
+.geo { display: flex; align-items: center; gap: 1.6vmin; margin-top: 1.4vmin; }
+.geo button { flex: none; padding: 1.1vmin 1.8vmin; font-family: var(--font); font-size: 2.2vmin; background: var(--grey); color: var(--amber); border: 0.2vmin solid var(--amber-dim); border-radius: .6vmin; cursor: pointer; white-space: nowrap; }
+.geo button:disabled { opacity: .5; }
+#geoMsg { font-size: 1.9vmin; color: var(--amber); min-width: 0; }
 .btns { display: flex; gap: 1.4vmin; margin-top: 2.2vmin; }
 .btns button { flex: 1; white-space: nowrap; padding: 1.2vmin; font-family: var(--font); font-size: 2.6vmin; background: var(--grey); color: var(--white); border: 0.2vmin solid #444; border-radius: .6vmin; cursor: pointer; }
 .btns button.primary { background: var(--amber); color: #000; border-color: var(--amber); }
@@ -255,6 +259,10 @@ body.ui-hidden .ctrl { opacity: .15; } /* bleibt schwach sichtbar und klickbar *
     <div class="two">
       <label>Breitengrad (LAT)<input type="text" inputmode="decimal" id="sLat"></label>
       <label>Längengrad (LON)<input type="text" inputmode="decimal" id="sLon"></label>
+    </div>
+    <div class="geo">
+      <button type="button" id="bGeo">&#9678; AKTUELLEN STANDORT ERMITTELN</button>
+      <span id="geoMsg"></span>
     </div>
     <div class="two">
       <label>Radius (km)<input type="number" id="sRadius" min="1" max="400" step="1"></label>
@@ -777,6 +785,7 @@ function openSettings() {
   $('sNight').checked = !!CONFIG.NIGHT_ENABLED;
   $('sNStart').value = CONFIG.NIGHT_START;
   $('sNEnd').value = CONFIG.NIGHT_END;
+  geoMsg('');
   $('settings').classList.add('open');
 }
 function closeSettings() { $('settings').classList.remove('open'); showUi(); }
@@ -804,6 +813,52 @@ $('bReset').addEventListener('click', function () {
   CONFIG = loadConfig();
   openSettings();
 });
+
+/* ---------------------------------------------------------
+   Standort per Browser ermitteln (Geolocation API) und Ortsnamen suchen.
+   Braucht HTTPS (GitHub Pages ok) und die Erlaubnis des Nutzers.
+   Ortsname: OpenStreetMap Nominatim, Ersatz: BigDataCloud (beide ohne Schlüssel).
+   Die Werte landen nur in den Feldern - übernommen wird erst mit SPEICHERN.
+   --------------------------------------------------------- */
+function geoMsg(text, isErr) { var el = $('geoMsg'); el.textContent = text; el.style.color = isErr ? '#e5483b' : ''; }
+
+function placeFromNominatim(d) {
+  var a = d && d.address;
+  if (!a) return '';
+  return a.village || a.town || a.city || a.suburb || a.hamlet || a.municipality || a.county || '';
+}
+function reverseName(lat, lon) {
+  var q = 'lat=' + lat.toFixed(5) + '&lon=' + lon.toFixed(5);
+  return fetchJson('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&accept-language=de&' + q, 8000)
+    .then(function (d) { var n = placeFromNominatim(d); if (!n) throw new Error('kein Name'); return n; })
+    .catch(function () {
+      return fetchJson('https://api.bigdatacloud.net/data/reverse-geocode-client?localityLanguage=de&latitude=' + lat.toFixed(5) + '&longitude=' + lon.toFixed(5), 8000)
+        .then(function (d) { return (d && (d.locality || d.city)) || ''; });
+    })
+    .catch(function () { return ''; });
+}
+function locate() {
+  var btn = $('bGeo');
+  if (!navigator.geolocation) { geoMsg('GEOLOKALISIERUNG NICHT VERFÜGBAR - KOORDINATEN BITTE MANUELL EINTRAGEN', true); return; }
+  btn.disabled = true; geoMsg('FRAGE STANDORT AB... (BITTE ERLAUBEN)');
+  navigator.geolocation.getCurrentPosition(function (pos) {
+    var lat = pos.coords.latitude, lon = pos.coords.longitude;
+    $('sLat').value = lat.toFixed(4);
+    $('sLon').value = lon.toFixed(4);
+    var acc = pos.coords.accuracy ? ' (±' + Math.round(pos.coords.accuracy) + ' M)' : '';
+    geoMsg('STANDORT GEFUNDEN' + acc + ' - SUCHE ORTSNAMEN...');
+    reverseName(lat, lon).then(function (name) {
+      if (name) { $('sName').value = name.toUpperCase(); geoMsg('GEFUNDEN: ' + name.toUpperCase() + acc + ' - ZUM ÜBERNEHMEN SPEICHERN'); }
+      else geoMsg('KOORDINATEN GEFUNDEN' + acc + ', ORTSNAME NICHT ERMITTELT - BITTE MANUELL EINTRAGEN. ZUM ÜBERNEHMEN SPEICHERN');
+      btn.disabled = false;
+    });
+  }, function (err) {
+    var msgs = { 1: 'ZUGRIFF VERWEIGERT - IN DEN BROWSER-/SEITENEINSTELLUNGEN ERLAUBEN', 2: 'STANDORT NICHT VERFÜGBAR', 3: 'ZEITÜBERSCHREITUNG - BITTE NOCHMAL VERSUCHEN' };
+    geoMsg(msgs[err && err.code] || 'STANDORT FEHLGESCHLAGEN', true);
+    btn.disabled = false;
+  }, { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 });
+}
+$('bGeo').addEventListener('click', locate);
 
 function applyConfig() {
   setText($('loc'), CONFIG.NAME);
